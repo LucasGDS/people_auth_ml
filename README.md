@@ -1,11 +1,11 @@
 # people_auth_ml
 Application to recognize people by face and voice using Machine Learning
 
-#SETUP
+# SETUP  
 
-#HOW TO USE
-##Register
+# HOW TO USE
+## Register
 
-##Recognize
+## Recognize
 
 #ABOUT
