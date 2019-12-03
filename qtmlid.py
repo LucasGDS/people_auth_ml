@@ -6,6 +6,15 @@ import cv2
 import numpy as np
 from subprocess import Popen
 import os
+
+import facenet
+from draw_boxes import *
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import librosa
+from faced import FaceDetector #for better cpu support
+from faced.utils import annotate_image
+
 # from PyQt5.QtCore import Qt, QTimer
 
 # app = QApplication([])
@@ -17,7 +26,67 @@ import os
 
 fps = 30
 cap = cv2.VideoCapture(0)
-path = "./dataset"
+ds_path = "./dataset"
+thresh = 0.5
+
+sess = tf.Session()
+facenet.load_model("./20170512-110547/20170512-110547.pb")
+image_placeholder = tf.get_default_graph().get_tensor_by_name("input:0") 
+embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0") 
+train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
+
+face_detector = FaceDetector()
+
+#Funcao que calcula a distancia euclidiana entre dois vetores
+def distance(vector1, vector2):
+    return np.sqrt(np.sum((vector1 - vector2)**2))
+
+def get_embedding(img_path): 
+    img_size = 160
+    img = cv2.imread(img_path)
+    #o opencv abre a imagem em BGR, necessario converter para RGB
+    if img is None:
+        print("Imagem não pode ser aberta.")
+        return None
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    #Preparando a imagem de entrada
+    resized = cv2.resize(img, (img_size,img_size),interpolation=cv2.INTER_CUBIC)
+    reshaped = resized.reshape(-1,img_size, img_size,3)
+    #Configurando entrada e execucao do FaceNet
+    feed_dict = {image_placeholder: reshaped, train_placeholder: False}
+    embedding = sess.run(embeddings , feed_dict=feed_dict) 
+    return embedding[0], img
+
+def get_embedding_img(img): 
+    img_size = 160
+    #Preparando a imagem de entrada
+    resized = cv2.resize(img, (img_size,img_size),interpolation=cv2.INTER_CUBIC)
+    reshaped = resized.reshape(-1,img_size, img_size,3)
+    #Configurando entrada e execucao do FaceNet
+    feed_dict = {image_placeholder: reshaped, train_placeholder: False}
+    embedding = sess.run(embeddings , feed_dict=feed_dict) 
+    return embedding[0]
+
+def who_is_it_crop(img, database):
+    min_dist = 1000 
+    identity = -1
+    #Calculando o embedding do visitante
+    visitor = get_embedding_img(img)
+    #Calculando a distacia do visitante com os demais funcionarios
+    res_vec = []
+    for name, employee in database.items():
+        dist = distance(visitor, employee)
+        res_vec.append(dist)
+        if dist < min_dist:
+            min_dist = dist 
+            identity = name
+    #verificando a identidade
+    if min_dist > 0.5:
+        print("Essa pessoa nao esta cadastrada!")
+        return None, img, res_vec
+    else:
+        return identity, img, res_vec
+
 
 class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
     
@@ -38,7 +107,14 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         self.timer.start(0)#miliseconds
 
         self.progressbartimer = QtCore.QTimer(self)
-        self.progressbartimer.timeout.connect(self.recording)  
+        self.progressbartimer.timeout.connect(self.recording)
+
+        self.timer_id = QtCore.QTimer(self)
+        self.timer_id.timeout.connect(self.id_routine)
+
+        self.database_img = {}
+        self.database_snd = {}  
+        self.id_state = 0
     
     def set_trocas(self,valor):
         self.trocas = valor
@@ -81,7 +157,12 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         pix = QtGui.QPixmap(image)
         scenecadastrar = QGraphicsScene()
         scenecadastrar.addPixmap(pix)
-        self.graphicsView_2.setScene(scenecadastrar)
+
+        tab_ind = self.tabWidget.currentIndex()
+        if  tab_ind == 1:
+            self.graphicsView_2.setScene(scenecadastrar)
+        elif tab_ind == 2:
+            self.graphicsView_3.setScene(scenecadastrar)
 
 
         # # Use PIL (Pillow) to convert the NumPy ndarray to a PhotoImage
@@ -97,7 +178,7 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         if user == "":
             user = "default"
         img_name = user+".png"
-        cv2.imwrite(os.path.join(path,img_name), frame)
+        cv2.imwrite(os.path.join(ds_path,img_name), frame)
         self.label_reg_status.setText("%s.png salvo!"%user)
 
     def buttonrec_press(self):
@@ -106,6 +187,7 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
             user = "default"
         # elif user == None:
         #     continue 
+            self.prepare_id()
         print(user)
         comando = ["arecord", "--duration", "4", "--format", "cd", "./voice/"+user+".wav"]
         gravacao=Popen(comando)
@@ -116,15 +198,21 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         tab_ind = tabWidget.currentIndex()
         if tab_ind == 0:
             # print("populatelist")
-            self.label_reg_status.setText("")
+            self.label_reg_status.setText("-")
             self.populate_list()
             self.timer.stop()
+            self.timer_id.stop()
             pass
         elif tab_ind == 1:
             # print("register")
+            self.timer_id.stop()
             self.timer.start(1000/fps)#miliseconds
             self.draw_reg()
         elif tab_ind == 2:
+            self.prepare_id()
+            self.id_state = 0
+            self.timer.stop()
+            self.timer_id.start(1000/fps)
             # print("identificate")
             pass
     
@@ -141,7 +229,47 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         else:
             self.progressBar.setValue(value-1)
             self.progressBar.setFormat("REC")
+    
+    def prepare_id(self):
+        self.database_img = {}
+        self.database_snd = {}
 
+        paths = os.listdir(ds_path)
+        for path in paths:
+            if os.path.exists('./voice/'+path[:-4]+".wav"):
+                # self.database_img[path[:-4]], img = get_embedding(os.path.join(ds_path,path))#.addItem(path[:-4])
+                img = cv2.imread("./dataset/%s"%path)
+                if img is None:
+                    print("Imagem ",path, " não pode ser aberta.")
+                    return None
+                rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                bboxes = face_detector.predict(rgb_img, thresh)
+                if len(bboxes) != 0:
+                    for x,y,w,h,p in bboxes :
+                        ####
+                        x0=int(x-w/2)
+                        y0=int(y-h/2)
+                        x0plusw = int(x+w/2)
+                        y0plush = int(y+h/2)
+                        ####
+                        cv2.imshow(path[:-4], img[y0: y0plush,x0 : x0plusw])
+                print('loaded '+path)
+                self.database_img[path[:-4]] = get_embedding_img(rgb_img[y0: y0plush,x0 : x0plusw])
+                audio, sr = librosa.load('./voice/'+path[:-4]+".wav", sr=22000, duration=2, mono=True)
+                processed = librosa.feature.melspectrogram(y=audio, sr=sr)
+            if (processed.shape == (128, 86)):
+               self.database_snd[path[:-4]] = processed
+        
+
+    def id_routine(self):
+
+        if self.id_state == 0:
+            self.draw_reg()
+            pass
+        elif self.id_state == 1:
+            pass
+        elif self.id_state == 2:
+            pass
 
 def main():
     if not(os.path.exists('dataset')):
