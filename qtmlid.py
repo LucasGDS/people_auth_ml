@@ -41,12 +41,12 @@ train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
 face_detector = FaceDetector()
 
 # load json and create model
-json_file = open('modelnochanges.json', 'r')
+json_file = open('modelfunctional.json', 'r')
 loaded_model_json = json_file.read()
 json_file.close()
 loaded_model = model_from_json(loaded_model_json)
 # load weights into new model
-loaded_model.load_weights("modelregister-2019-10-15-16:52.h5")
+loaded_model.load_weights("modelregister-2020-01-08-19:08.h5")
 print("Loaded model from disk")
 
 networkoptimizer = optimizers.SGD(lr=0.01)
@@ -120,7 +120,7 @@ def whose_voice(visitor, database):
         y_pred = loaded_model.predict([X_test_l, X_test_r])
 
         print ("y_pred:",y_pred)
-        similarity = y_pred[0]
+        similarity = y_pred[0][1]
         if similarity > max_sim:
             max_sim = similarity 
             identity = name
@@ -327,7 +327,7 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
                         # cv2.imshow(path[:-4], img[y0: y0plush,x0 : x0plusw])
                 print('loaded '+path)
                 self.database_img[path[:-4]] = get_embedding_img(rgb_img[y0: y0plush,x0 : x0plusw])
-                audio, sr = librosa.load('./voice/'+path[:-4]+".wav", sr=22000, duration=2, mono=True)
+                audio, sr = librosa.load('./voice/'+path[:-4]+".wav", sr=22000, duration=2, mono=True,offset=1)
                 processed = librosa.feature.melspectrogram(y=audio, sr=sr)
                 if (processed.shape == (128, 86)):
                     self.database_snd[path[:-4]] = processed
