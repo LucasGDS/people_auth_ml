@@ -15,6 +15,8 @@ import librosa
 from faced import FaceDetector #for better cpu support
 from faced.utils import annotate_image
 
+from mtcnn import MTCNN
+
 from keras.models import Model, Sequential, model_from_json
 from keras import optimizers
 
@@ -27,9 +29,9 @@ from keras import optimizers
 # label.show()
 # app.exec()
 
-fps = 30
+FPS = 30
 cap = cv2.VideoCapture(0)
-ds_path = "./dataset"
+DS_PATH = "./dataset"
 thresh = 0.5
 
 sess = tf.Session()
@@ -38,15 +40,16 @@ image_placeholder = tf.get_default_graph().get_tensor_by_name("input:0")
 embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0") 
 train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
 
-face_detector = FaceDetector()
+# face_detector = FaceDetector()
+face_detector = MTCNN()
 
 # load json and create model
-json_file = open('modelfunctional.json', 'r')
+json_file = open('modelkfoldoneshot.json', 'r') #open('modelfunctional.json', 'r')
 loaded_model_json = json_file.read()
 json_file.close()
 loaded_model = model_from_json(loaded_model_json)
 # load weights into new model
-loaded_model.load_weights("modelregister-2020-01-08-19:08.h5")
+loaded_model.load_weights("model-2020-02-21-16:50-fold0.h5") #("modelregister-2020-01-08-19:08.h5") 
 print("Loaded model from disk")
 
 networkoptimizer = optimizers.SGD(lr=0.01)
@@ -97,7 +100,7 @@ def who_is_it_crop(img, database):
             min_dist = dist 
             identity = name
     #verificando a identidade
-    if min_dist > 0.5:
+    if min_dist > 1.1: #0.5:
         print("Essa pessoa nao esta cadastrada!")
         return None, img
     else:
@@ -125,7 +128,7 @@ def whose_voice(visitor, database):
             max_sim = similarity 
             identity = name
     #verificando a identidade
-    if max_sim < 0.99:
+    if max_sim < 0.6:
         print("Essa pessoa nao esta cadastrada!")
         return None
     else:
@@ -162,7 +165,9 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         self.database_img = {}
         self.database_snd = {}  
         self.id_state = 0
-        self.soundprocessingflag = False
+
+        self.voice_rec = None
+        self.face_rec = None
         # self.id_rgb_frame = None
             
     def set_trocas(self,valor):
@@ -227,7 +232,7 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         if user == "":
             user = "default"
         img_name = user+".png"
-        cv2.imwrite(os.path.join(ds_path,img_name), frame)
+        cv2.imwrite(os.path.join(DS_PATH,img_name), frame)
         self.label_reg_status.setText("%s.png salvo!"%user)
 
     def buttonrec_press(self):
@@ -251,18 +256,26 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         if frame.shape[0] == 0:
             pass
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) 
-        bboxes = face_detector.predict(rgb_frame, thresh)
+        # bboxes = face_detector.predict(rgb_frame, thresh)
+        bboxes = face_detector.detect_faces(rgb_frame)
         if len(bboxes) != 0:
-            for x,y,w,h,p in bboxes :
-                ####
-                x0=int(x-w/2)
-                y0=int(y-h/2)
-                x0plusw = int(x+w/2)
-                y0plush = int(y+h/2)
-                ####
-                cv2.imshow("window", frame[y0: y0plush,x0 : x0plusw])
-                identity, image = who_is_it_crop(rgb_frame[y0: y0plush,x0 : x0plusw], self.database_img)
-                print ("Facenet: ",identity)
+            # for x,y,w,h,p in bboxes :
+            #     ####
+            #     x0=int(x-w/2)
+            #     y0=int(y-h/2)
+            #     x0plusw = int(x+w/2)
+            #     y0plush = int(y+h/2)
+            #     ####
+            #     cv2.imshow("window", frame[y0: y0plush,x0 : x0plusw])
+            #     identity, image = who_is_it_crop(rgb_frame[y0: y0plush,x0 : x0plusw], self.database_img)
+            #     print ("Facenet: ",identity)
+            x,y,w,h = bboxes[0]['box']
+            x0plusw = int(x+w)
+            y0plush = int(y+h)
+            identity, image = who_is_it_crop(rgb_frame[y: y0plush,x : x0plusw], self.database_img)
+            print ("Facenet: ",identity)
+            self.face_rec = identity
+            self.id_state += 1
         pass
     
     def onUpdate(self):
@@ -278,13 +291,14 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         elif tab_ind == 1:
             # print("register")
             self.timer_id.stop()
-            self.timer.start(1000/fps)#miliseconds
+            self.timer.start(1000/FPS)#miliseconds
             self.draw_reg()
         elif tab_ind == 2:
+            self.label_id_status.setText("-")
             self.prepare_id()
             self.id_state = 0
             self.timer.stop()
-            self.timer_id.start(1000/fps)
+            self.timer_id.start(1000/FPS)
             # print("identificate")
             pass
     
@@ -306,28 +320,37 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         self.database_img = {}
         self.database_snd = {}
 
-        paths = os.listdir(ds_path)
+        paths = os.listdir(DS_PATH)
         for path in paths:
             if os.path.exists('./voice/'+path[:-4]+".wav"):
-                # self.database_img[path[:-4]], img = get_embedding(os.path.join(ds_path,path))#.addItem(path[:-4])
+                # self.database_img[path[:-4]], img = get_embedding(os.path.join(DS_PATH,path))#.addItem(path[:-4])
                 img = cv2.imread("./dataset/%s"%path)
                 if img is None:
                     print("Imagem ",path, " não pode ser aberta.")
                     return None
                 rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                bboxes = face_detector.predict(rgb_img, thresh)
+                # bboxes = face_detector.predict(rgb_img, thresh)
+                bboxes = face_detector.detect_faces(rgb_img)
                 if len(bboxes) != 0:
-                    for x,y,w,h,p in bboxes :
-                        ####
-                        x0=int(x-w/2)
-                        y0=int(y-h/2)
-                        x0plusw = int(x+w/2)
-                        y0plush = int(y+h/2)
-                        ####
-                        # cv2.imshow(path[:-4], img[y0: y0plush,x0 : x0plusw])
+                    # for x,y,w,h in bboxes[0]['box'] :
+                    #     ####
+                    #     x0=int(x-w/2)
+                    #     y0=int(y-h/2)
+                    #     x0plusw = int(x+w/2)
+                    #     y0plush = int(y+h/2)
+                    #     ####
+                    #     cv2.imshow(path[:-4], img[y0: y0plush,x0 : x0plusw])
+
+                    x,y,w,h = bboxes[0]['box'] #it only gets the first face
+                    ####
+                    x0plusw = int(x+w)
+                    y0plush = int(y+h)
+                    ####
+                    cv2.imshow(path[:-4], img[y: y0plush,x : x0plusw])
+
                 print('loaded '+path)
-                self.database_img[path[:-4]] = get_embedding_img(rgb_img[y0: y0plush,x0 : x0plusw])
-                audio, sr = librosa.load('./voice/'+path[:-4]+".wav", sr=22000, duration=2, mono=True,offset=1)
+                self.database_img[path[:-4]] = get_embedding_img(rgb_img[y: y0plush,x : x0plusw])
+                audio, sr = librosa.load('./voice/'+path[:-4]+".wav", sr=22000, duration=2, mono=True, offset=0.5)
                 processed = librosa.feature.melspectrogram(y=audio, sr=sr)
                 if (processed.shape == (128, 86)):
                     self.database_snd[path[:-4]] = processed
@@ -340,22 +363,30 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
             pass
         elif self.id_state == 1: # recording voice, changed in buttonid_press():
             # self.timer_id.stop()
-            self.soundprocessingflag == True
-            while self.soundprocessingflag == True:    
-                if self.id_state == 2: # processing
+            #while self.id_state > 0:
+            pass    
+        elif self.id_state == 2: # processing
 
-                    pass
-                elif self.id_state == 3: # results
-
-                    pass
+            pass
+        elif self.id_state == 3: # results
+            if self.face_rec != None and self.voice_rec != None :
+                if self.face_rec == self.voice_rec :
+                    self.label_id_status.setText("BEM-VINDO"+self.face_rec)
+                # else :
+            self.face_rec = None
+            self.voice_rec = None
+            self.id_state = 0    
+            pass
     
     def id_voice(self):
         self.timer_id_voicerecord.stop()
-        audio, sr = librosa.load('./id/idrecord.wav', sr=22000, duration=2, mono=True)
+        audio, sr = librosa.load('./id/idrecord.wav', sr=22000, duration=2, mono=True, offset=0.5)
         processed = librosa.feature.melspectrogram(y=audio, sr=sr)
 
         identity = whose_voice(processed, self.database_snd)
         print("Voice: ",identity)
+        self.voice_rec = identity
+        self.id_state += 1
         pass
 
 
