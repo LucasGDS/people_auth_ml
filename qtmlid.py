@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QApplication, QGraphicsScene #, QLabel
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimedia
 import sys
 import qtmliddes #pyuic5 qtmlid.ui -o qtmliddes.py
 import cv2
@@ -8,12 +8,8 @@ from subprocess import Popen
 import os
 
 import facenet
-from draw_boxes import *
 import tensorflow as tf
-import matplotlib.pyplot as plt
 import librosa
-from faced import FaceDetector #for better cpu support
-from faced.utils import annotate_image
 
 from mtcnn import MTCNN
 
@@ -31,11 +27,11 @@ from keras import optimizers
 
 FPS = 30
 cap = cv2.VideoCapture(0)
-DS_PATH = "./dataset"
+DS_PATH = "./dataset" #location to save and load image files
 thresh = 0.5
 
 sess = tf.Session()
-facenet.load_model("./20170512-110547/20170512-110547.pb")
+facenet.load_model("./20170512-110547/20170512-110547.pb") #Loading Facenet trained model 
 image_placeholder = tf.get_default_graph().get_tensor_by_name("input:0") 
 embeddings = tf.get_default_graph().get_tensor_by_name("embeddings:0") 
 train_placeholder = tf.get_default_graph().get_tensor_by_name("phase_train:0")
@@ -242,6 +238,21 @@ class Mlid(QtWidgets.QMainWindow, qtmliddes.Ui_MainWindow):
         # elif user == None:
         #     continue 
         print(user)
+        
+        # audiorecorder = QtMultimedia.QAudioRecorder()
+        # audiorecorder.record()
+
+        # recorder=QtMultimedia.QAudioRecorder()
+
+        # audioSettings=QAudioEncoderSettings()
+        # audioSettings.setCodec("audio/PCM")
+        # audioSettings.setSampleRate(16000)
+        # recorder.setAudioSettings(audioSettings);
+
+        # recorder.setContainerFormat("wav");
+        # # recorder.setOutputLocation(QUrl.fromLocalFile("/sdcard/test"))
+        # recorder.setOutputLocation(QUrl.fromLocalFile("./qtrecord/test"))
+
         comando = ["arecord", "--duration", "4", "--format", "cd", "./voice/"+user+".wav"]
         gravacao=Popen(comando)
         self.progressbartimer.start(1000)        
